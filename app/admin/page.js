@@ -1,4 +1,4 @@
-'use client'; // Componente de Cliente
+'use client'; 
 
 import React, { useState } from 'react';
 import { addEquipo } from '@/lib/firestoreService';
@@ -11,6 +11,27 @@ import ResultadosManager from './ResultadosManager';
 
 const CATEGORIAS = ['5ta Caballeros', '6ta Caballeros', '7ma Mixto', '4ta Damas'];
 const ZONAS = ['Zona A', 'Zona B', 'Zona C', 'Zona D'];
+
+// ----------------------------------------------------
+// ESTILOS INLINE (Necesarios para el componente)
+// ----------------------------------------------------
+
+const labelStyle = { display: 'block', marginBottom: '5px', color: '#FFD700', fontWeight: '600' };
+const inputStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
+const selectStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
+const buttonStyle = { 
+    padding: '10px 20px', 
+    background: '#FFD700', 
+    color: '#222', 
+    border: 'none', 
+    borderRadius: '4px', 
+    cursor: 'pointer', 
+    fontWeight: 'bold', 
+    marginTop: '10px',
+    transition: 'background-color 0.3s'
+};
+const formGroupStyle = { flex: 1 };
+
 
 // ----------------------------------------------------
 // COMPONENTE PRINCIPAL
@@ -26,6 +47,15 @@ const AdminPanel = () => {
     zona: ZONAS[0],
   });
   const [mensaje, setMensaje] = useState('');
+  
+  // Estado para forzar la recarga de listas (Equipos y Partidos)
+  const [refreshKey, setRefreshKey] = useState(0); 
+  
+  // Función para forzar la recarga
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
+
 
   const handleChange = (e) => {
     setEquipo({ ...equipo, [e.target.name]: e.target.value });
@@ -51,6 +81,8 @@ const AdminPanel = () => {
         categoria: equipo.categoria,
         zona: equipo.zona,
       });
+      // Forzamos la recarga de la lista de equipos en los Managers
+      handleRefresh(); 
       setTimeout(() => setMensaje(''), 3000);
     } else {
       setMensaje(`❌ Error al cargar: ${result.error}`);
@@ -135,34 +167,16 @@ const AdminPanel = () => {
       </form>
       
       {/* GESTOR DE PARTIDOS - SECCIÓN 2 */}
-      <PartidosManager /> 
+      {/* Pasamos el handler de recarga y el key para forzar la recarga de equipos */}
+      <PartidosManager onPartidoAdded={handleRefresh} refreshKey={refreshKey} /> 
       
       {/* GESTOR DE RESULTADOS - SECCIÓN 3 */}
-      <ResultadosManager />
+      {/* Usamos el key para forzar que el componente se remonte y recargue los partidos pendientes */}
+      <ResultadosManager key={refreshKey} />
 
     </div>
   );
 };
-
-// ----------------------------------------------------
-// ESTILOS INLINE (PadelZone Gold Edition)
-// ----------------------------------------------------
-
-const labelStyle = { display: 'block', marginBottom: '5px', color: '#FFD700', fontWeight: '600' };
-const inputStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
-const selectStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
-const buttonStyle = { 
-    padding: '10px 20px', 
-    background: '#FFD700', 
-    color: '#222', 
-    border: 'none', 
-    borderRadius: '4px', 
-    cursor: 'pointer', 
-    fontWeight: 'bold', 
-    marginTop: '10px',
-    transition: 'background-color 0.3s'
-};
-const formGroupStyle = { flex: 1 };
 
 
 export default AdminPanel;

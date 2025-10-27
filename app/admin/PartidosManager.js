@@ -1,13 +1,13 @@
-// /app/admin/PartidosManager.js
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { getEquipos, addPartido } from '@/lib/firestoreService';
+import { getEquipos, addPartido } from '@/lib/firestoreService'; 
 
+// Constantes del torneo
 const CANCHAS = ['Cancha 1', 'Cancha 2', 'Cancha 3', 'Cancha Principal'];
 const RONDAS = ['Jornada 1', 'Jornada 2', 'Jornada 3', 'Cuartos de Final', 'Semifinal', 'Final'];
 
-export default function PartidosManager() {
+export default function PartidosManager({ onPartidoAdded, refreshKey }) {
   const [equipos, setEquipos] = useState([]);
   const [partido, setPartido] = useState({
     idEquipoA: '',
@@ -19,7 +19,7 @@ export default function PartidosManager() {
   });
   const [mensaje, setMensaje] = useState('');
 
-  // 1. Cargar equipos al iniciar
+  // Cargar equipos al iniciar o cuando cambia refreshKey (cuando se agrega un equipo)
   useEffect(() => {
     async function loadEquipos() {
       const data = await getEquipos();
@@ -30,18 +30,17 @@ export default function PartidosManager() {
           ...prev,
           idEquipoA: data[0].id,
           idEquipoB: data[1].id,
-          zona: data[0].zona // Asumimos la zona del primer equipo
+          zona: data[0].zona 
         }));
       }
     }
     loadEquipos();
-  }, []);
+  }, [refreshKey]); 
 
   const handleChange = (e) => {
     setPartido({ ...partido, [e.target.name]: e.target.value });
   };
   
-  // Función para obtener el nombre del equipo por ID
   const getEquipoName = (id) => {
       const team = equipos.find(e => e.id === id);
       return team ? team.nombre : '';
@@ -59,12 +58,11 @@ export default function PartidosManager() {
         return;
     }
     
-    // Preparar el objeto final con los nombres de los equipos
     const partidoFinal = {
         ...partido,
         nombreEquipoA: getEquipoName(idEquipoA),
         nombreEquipoB: getEquipoName(idEquipoB),
-        // Convertir la hora a un objeto Date (Firestore lo manejará como Timestamp)
+        // Convertir la hora a un objeto Date para Firestore
         horaInicio: new Date(horaInicio), 
     }
 
@@ -72,6 +70,8 @@ export default function PartidosManager() {
 
     if (result.success) {
       setMensaje(`✅ Partido programado con éxito: ${partidoFinal.nombreEquipoA} vs ${partidoFinal.nombreEquipoB}`);
+      // Llama a la función de recarga del padre para actualizar la lista de resultados
+      if (onPartidoAdded) onPartidoAdded(); 
       setTimeout(() => setMensaje(''), 3000);
     } else {
       setMensaje(`❌ Error al programar: ${result.error}`);
@@ -80,7 +80,7 @@ export default function PartidosManager() {
 
   if (equipos.length < 2) {
     return (
-      <div style={{ background: '#333', padding: '15px', color: '#FFD700', borderRadius: '4px' }}>
+      <div style={{ background: '#333', padding: '15px', color: '#FFD700', borderRadius: '4px', marginTop: '30px' }}>
         ⚠️ Se necesitan al menos 2 equipos cargados para programar un partido.
       </div>
     );
@@ -123,7 +123,6 @@ export default function PartidosManager() {
           </div>
           <div style={formGroupStyle}>
             <label style={labelStyle}>Hora/Fecha de Inicio:</label>
-            {/* Usamos datetime-local para capturar fecha y hora */}
             <input 
               type="datetime-local"
               name="horaInicio"
@@ -166,9 +165,19 @@ export default function PartidosManager() {
   );
 }
 
-// Estilos (mantener los estilos definidos previamente para consistencia)
-const labelStyle = { display: 'block', marginBottom: '5px', color: '#FFD700' };
+// Estilos
+const labelStyle = { display: 'block', marginBottom: '5px', color: '#FFD700', fontWeight: '600' };
 const inputStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
 const selectStyle = { width: '100%', padding: '10px', border: '1px solid #FFD700', borderRadius: '4px', background: '#222', color: '#fff' };
-const buttonStyle = { padding: '10px 20px', background: '#FFD700', color: '#222', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginTop: '10px' };
+const buttonStyle = { 
+    padding: '10px 20px', 
+    background: '#FFD700', 
+    color: '#222', 
+    border: 'none', 
+    borderRadius: '4px', 
+    cursor: 'pointer', 
+    fontWeight: 'bold', 
+    marginTop: '10px',
+    transition: 'background-color 0.3s'
+};
 const formGroupStyle = { flex: 1 };

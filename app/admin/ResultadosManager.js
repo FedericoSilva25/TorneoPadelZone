@@ -1,24 +1,21 @@
-// /app/admin/ResultadosManager.js
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { db } from '@/lib/firebaseConfig';
 import { getPartidosPendientes, finalizarPartidoYActualizarRanking } from '@/lib/firestoreService';
+import { doc, updateDoc } from 'firebase/firestore'; 
 
-const MAX_SETS = 3; // Un partido puede tener hasta 3 sets
+const MAX_SETS = 3; 
 
 // Componente para cargar los scores de un partido individual
 const ScoreForm = ({ partido, onUpdate }) => {
-    const [scores, setScores] = useState(partido.resultadoSets || []);
+    // Aseguramos que scores tenga la longitud de MAX_SETS para que los inputs se rendericen
+    const initialScores = partido.resultadoSets || [];
+    while (initialScores.length < MAX_SETS) {
+        initialScores.push([0, 0]);
+    }
+    const [scores, setScores] = useState(initialScores);
     const [mensaje, setMensaje] = useState('');
-
-    // Rellena la estructura de scores si no existe o tiene menos de 3 sets
-    useEffect(() => {
-        let newScores = [...partido.resultadoSets];
-        while (newScores.length < MAX_SETS) {
-            newScores.push([0, 0]);
-        }
-        setScores(newScores);
-    }, [partido.resultadoSets]);
 
     const handleScoreChange = (setIndex, teamIndex, value) => {
         const newScores = scores.map((set, i) => {
@@ -36,25 +33,28 @@ const ScoreForm = ({ partido, onUpdate }) => {
         let setsA = 0;
         let setsB = 0;
         let setsJugados = 0;
+        let setsValidos = [];
 
         for (const [scoreA, scoreB] of scores) {
-            if (scoreA === 0 && scoreB === 0) continue; // Set vacío
+            if (scoreA === 0 && scoreB === 0) {
+                // Si encontramos un set 0-0 y ya se jugó algo, lo incluimos en setsValidos si no es el último.
+                if (setsJugados > 0 && setsValidos.length < MAX_SETS) setsValidos.push([scoreA, scoreB]); 
+                continue; 
+            }
+            
             setsJugados++;
+            setsValidos.push([scoreA, scoreB]);
+
+            // Reglas básicas de pádel (6 games con 2 de diferencia, o 7-6)
+            const ganoA = (scoreA >= 6 && scoreA - scoreB >= 2) || (scoreA === 7 && scoreB === 6);
+            const ganoB = (scoreB >= 6 && scoreB - scoreA >= 2) || (scoreB === 7 && scoreA === 6);
             
-            // Regla básica: el ganador debe tener al menos 6 games y 2 de diferencia
-            const ganoA = scoreA >= 6 && scoreA - scoreB >= 2;
-            const ganoB = scoreB >= 6 && scoreB - scoreA >= 2;
-            
-            // Regla tie-break (solo si el score es 7-6)
-            const tieBreakA = (scoreA === 7 && scoreB === 6);
-            const tieBreakB = (scoreB === 7 && scoreA === 6);
-            
-            if (ganoA || tieBreakA) {
+            if (ganoA) {
                 setsA++;
-            } else if (ganoB || tieBreakB) {
+            } else if (ganoB) {
                 setsB++;
-            } else if (setsJugados > 0) {
-                setMensaje("🚨 Resultado de set inválido. El ganador debe tener 6+ games y 2 de diferencia (o 7-6).");
+            } else {
+                setMensaje("🚨 Resultado de set inválido. Verifique 6+ games y 2 de diferencia (o 7-6).");
                 return false;
             }
         }
@@ -62,49 +62,65 @@ const ScoreForm = ({ partido, onUpdate }) => {
         // El partido finaliza si alguien gana 2 sets (2-0 o 2-1)
         if (setsA === 2 || setsB === 2) {
             setMensaje("");
-            // Devolvemos solo los sets que realmente se jugaron
-            return scores.slice(0, setsJugados);
-        } else if (setsJugados > 0) {
-             setMensaje("🚨 El partido no ha finalizado (debe ser 2-0 o 2-1).");
-             return false;
+            // Devolvemos solo los sets que realmente se jugaron (quitando los sets 0-0 al final)
+            return setsValidos.filter(([a, b]) => a !== 0 || b !== 0); 
+        } else if (setsJugados > 0 && setsJugados < 2) {
+             setMensaje("📝 Partido en curso o faltan sets para finalizar (2-0 o 2-1).");
+             return setsValidos.filter(([a, b]) => a !== 0 || b !== 0);
+        } else if (setsJugados === 3 && setsA !== setsB) {
+             setMensaje("🏆 Listo para finalizar. El partido está 2-1.");
+             return setsValidos;
         } else if (partido.estado === 'Programado') {
-             setMensaje("✅ Puede dejar sets en blanco para iniciar en 'Jugando'.");
-             return scores.filter(([a, b]) => a !== 0 || b !== 0);
+             setMensaje("✅ Partido listo para empezar. Use 'Actualizar Score' para iniciar.");
+             return setsValidos.filter(([a, b]) => a !== 0 || b !== 0);
         }
         
+        setMensaje("📝 Ingrese los scores del primer set.");
         return false;
     };
     
     const handleFinalizar = async () => {
         const setsValidados = validarResultado();
-        if (!setsValidados) return;
+        if (!setsValidados || (setsValidados.length < 2 || setsValidados.length > 3)) {
+             setMensaje("🚨 El partido no puede finalizar. Debe ser 2-0 o 2-1.");
+             return;
+        }
         
         setMensaje("Finalizando partido y actualizando ranking...");
 
         try {
-            // Guardamos solo los sets jugados para evitar ceros innecesarios
             const result = await finalizarPartidoYActualizarRanking(partido, setsValidados);
             if (result.success) {
                 setMensaje(`🏆 Partido Finalizado! Ganador: ${result.ganador === partido.idEquipoA ? partido.nombreEquipoA : partido.nombreEquipoB}`);
-                onUpdate(); // Recargar la lista de partidos
+                // Llama al callback para que el padre recargue la lista
+                onUpdate(); 
             }
         } catch (error) {
             setMensaje(`❌ Error al finalizar: ${error.message}`);
         }
     }
     
-    // Función para marcar como "Jugando" sin finalizar
+    // Función para marcar como "Jugando" o actualizar score sin finalizar
     const handleActualizar = async () => {
+        const setsValidados = validarResultado(); 
+        
+        // Si no hay sets válidos ingresados y no hay scores previos, pedimos ingresar el score
+        if (!setsValidados && scores.every(([a, b]) => a === 0 && b === 0)) {
+            setMensaje("📝 Ingrese al menos el score del primer set.");
+            return;
+        }
+
         setMensaje("Actualizando marcador...");
         try {
             const partidoRef = doc(db, "partidos", partido.id);
             await updateDoc(partidoRef, {
-                estado: 'Jugando',
-                resultadoSets: scores,
+                // Si setsValidos es un array (no false), el estado es 'Jugando' (o si ya estaba Jugando)
+                estado: setsValidos ? 'Jugando' : partido.estado, 
+                resultadoSets: setsValidos || [],
             });
-            setMensaje(`⏱️ Marcador actualizado a: Jugando`);
+            setMensaje(`⏱️ Marcador actualizado. Estado: ${setsValidos ? 'Jugando' : partido.estado}.`);
             setTimeout(() => setMensaje(''), 3000);
-            onUpdate();
+            onUpdate(); // Recarga la lista por si el estado cambió
         } catch (error) {
             setMensaje(`❌ Error al actualizar: ${error.message}`);
         }
@@ -114,17 +130,18 @@ const ScoreForm = ({ partido, onUpdate }) => {
     return (
         <div style={scoreFormStyle}>
             <p style={{ fontWeight: 'bold', color: '#FFD700', marginBottom: '10px' }}>
-                {partido.nombreEquipoA} vs {partido.nombreEquipoB} ({partido.ronda})
+                {partido.nombreEquipoA} vs {partido.nombreEquipoB} ({partido.ronda} - {partido.cancha})
             </p>
             
-            <div style={{ display: 'flex', gap: '5px', marginBottom: '10px', alignItems: 'center' }}>
+            {/* Input de scores Equipo A */}
+            <div style={{ display: 'flex', gap: '5px', marginBottom: '5px', alignItems: 'center' }}>
                 <span style={{ flex: 1, textAlign: 'right', fontWeight: 'bold' }}>{partido.nombreEquipoA}</span>
-                {scores.map(([scoreA, scoreB], index) => (
+                {scores.map((set, index) => (
                     <div key={index} style={setContainerStyle}>
                         <input
                             type="number"
                             min="0"
-                            value={scores[index][0]}
+                            value={set[0]}
                             onChange={(e) => handleScoreChange(index, 0, e.target.value)}
                             style={scoreInputStyle}
                         />
@@ -132,14 +149,15 @@ const ScoreForm = ({ partido, onUpdate }) => {
                 ))}
             </div>
             
+             {/* Input de scores Equipo B */}
              <div style={{ display: 'flex', gap: '5px', marginBottom: '15px', alignItems: 'center' }}>
                 <span style={{ flex: 1, textAlign: 'right', fontWeight: 'bold' }}>{partido.nombreEquipoB}</span>
-                {scores.map(([scoreA, scoreB], index) => (
+                {scores.map((set, index) => (
                     <div key={index} style={setContainerStyle}>
                          <input
                             type="number"
                             min="0"
-                            value={scores[index][1]}
+                            value={set[1]}
                             onChange={(e) => handleScoreChange(index, 1, e.target.value)}
                             style={scoreInputStyle}
                         />
@@ -147,7 +165,7 @@ const ScoreForm = ({ partido, onUpdate }) => {
                 ))}
             </div>
             
-            <p style={{ color: mensaje.startsWith('🚨') ? '#FF4500' : (mensaje.startsWith('🏆') ? '#00FF00' : '#fff'), minHeight: '20px', fontSize: '12px' }}>{mensaje}</p>
+            <p style={{ color: mensaje.startsWith('🚨') ? '#FF4500' : (mensaje.startsWith('🏆') ? '#00FF00' : (mensaje.startsWith('📝') ? '#FFD700' : '#fff')), minHeight: '20px', fontSize: '12px' }}>{mensaje || ' '}</p>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '10px' }}>
                 <button type="button" onClick={handleActualizar} style={updateButtonStyle}>
@@ -176,6 +194,7 @@ export default function ResultadosManager() {
         setIsLoading(false);
     };
 
+    // Este useEffect se ejecuta al montar el componente (y cuando se recrea por el 'key' del padre)
     useEffect(() => {
         loadPartidos();
     }, []);
@@ -192,9 +211,10 @@ export default function ResultadosManager() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', marginTop: '20px' }}>
                 {partidos.length === 0 && !isLoading && (
-                    <p style={{ color: '#fff' }}>No hay partidos Programados o Jugando. ¡A programar!</p>
+                    <p style={{ color: '#fff', fontSize: '1.2em' }}>No hay partidos Programados o Jugando. ¡A programar!</p>
                 )}
                 {partidos.map(p => (
+                    // Pasamos loadPartidos como callback para que el formulario pueda pedir una recarga
                     <ScoreForm key={p.id} partido={p} onUpdate={loadPartidos} />
                 ))}
             </div>
@@ -203,7 +223,7 @@ export default function ResultadosManager() {
 }
 
 // ----------------------------------------------------
-// ESTILOS (Añadidos para este componente)
+// ESTILOS
 // ----------------------------------------------------
 const scoreFormStyle = {
     background: '#333',
