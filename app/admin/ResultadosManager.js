@@ -11,6 +11,7 @@ const MAX_SETS = 3;
 const ScoreForm = ({ partido, onUpdate }) => {
     // Aseguramos que scores tenga la longitud de MAX_SETS para que los inputs se rendericen
     const initialScores = partido.resultadoSets || [];
+    // Rellenamos con [0, 0] hasta 3 sets
     while (initialScores.length < MAX_SETS) {
         initialScores.push([0, 0]);
     }
@@ -21,7 +22,8 @@ const ScoreForm = ({ partido, onUpdate }) => {
         const newScores = scores.map((set, i) => {
             if (i === setIndex) {
                 const newSet = [...set];
-                newSet[teamIndex] = parseInt(value) || 0;
+                // Asegurar que el valor sea numérico, o 0 si está vacío
+                newSet[teamIndex] = parseInt(value) || 0; 
                 return newSet;
             }
             return set;
@@ -29,23 +31,19 @@ const ScoreForm = ({ partido, onUpdate }) => {
         setScores(newScores);
     };
     
-    const validarResultado = () => {
+    // Función central que valida el formato y determina si el partido ha finalizado
+    const validarResultado = (scoresArray) => {
         let setsA = 0;
         let setsB = 0;
-        let setsJugados = 0;
-        let setsValidos = [];
+        let setsValidos = []; // Solo incluye sets jugados o sets incompletos que son válidos hasta ahora
 
-        for (const [scoreA, scoreB] of scores) {
-            if (scoreA === 0 && scoreB === 0) {
-                // Si encontramos un set 0-0 y ya se jugó algo, lo incluimos en setsValidos si no es el último.
-                if (setsJugados > 0 && setsValidos.length < MAX_SETS) setsValidos.push([scoreA, scoreB]); 
-                continue; 
-            }
+        for (const [scoreA, scoreB] of scoresArray) {
+            if (scoreA === 0 && scoreB === 0) continue; 
             
-            setsJugados++;
+            // Si hay score, lo consideramos como un set jugado/en progreso
             setsValidos.push([scoreA, scoreB]);
 
-            // Reglas básicas de pádel (6 games con 2 de diferencia, o 7-6)
+            // Reglas básicas: el set es válido si cumple las condiciones de victoria o si está en progreso
             const ganoA = (scoreA >= 6 && scoreA - scoreB >= 2) || (scoreA === 7 && scoreB === 6);
             const ganoB = (scoreB >= 6 && scoreB - scoreA >= 2) || (scoreB === 7 && scoreA === 6);
             
@@ -54,6 +52,7 @@ const ScoreForm = ({ partido, onUpdate }) => {
             } else if (ganoB) {
                 setsB++;
             } else {
+                // Si el set tiene scores (>0) pero no cumple las reglas de victoria, es inválido.
                 setMensaje("🚨 Resultado de set inválido. Verifique 6+ games y 2 de diferencia (o 7-6).");
                 return false;
             }
@@ -61,38 +60,39 @@ const ScoreForm = ({ partido, onUpdate }) => {
         
         // El partido finaliza si alguien gana 2 sets (2-0 o 2-1)
         if (setsA === 2 || setsB === 2) {
-            setMensaje("");
-            // Devolvemos solo los sets que realmente se jugaron (quitando los sets 0-0 al final)
-            return setsValidos.filter(([a, b]) => a !== 0 || b !== 0); 
-        } else if (setsJugados > 0 && setsJugados < 2) {
-             setMensaje("📝 Partido en curso o faltan sets para finalizar (2-0 o 2-1).");
-             return setsValidos.filter(([a, b]) => a !== 0 || b !== 0);
-        } else if (setsJugados === 3 && setsA !== setsB) {
-             setMensaje("🏆 Listo para finalizar. El partido está 2-1.");
+            setMensaje("🏆 Listo para finalizar. El partido está 2-0 o 2-1.");
+            // Devolvemos solo los sets que tienen scores > 0
+            return setsValidos; 
+        } else if (setsValidos.length > 0 && setsValidos.length < 2) {
+             setMensaje("📝 Partido en curso o faltan sets.");
+        } else if (setsValidos.length === 3 && setsA !== setsB) {
+             setMensaje("🏆 Partido finalizado. Resultado 2-1.");
              return setsValidos;
-        } else if (partido.estado === 'Programado') {
-             setMensaje("✅ Partido listo para empezar. Use 'Actualizar Score' para iniciar.");
-             return setsValidos.filter(([a, b]) => a !== 0 || b !== 0);
+        } else if (setsValidos.length === 0 && partido.estado === 'Programado') {
+             setMensaje("✅ Listo para empezar.");
         }
         
-        setMensaje("📝 Ingrese los scores del primer set.");
-        return false;
+        // Si no hay errores, devolvemos el array de sets jugados (incluyendo sets incompletos que pasaron el filtro)
+        return setsValidos; 
     };
     
     const handleFinalizar = async () => {
-        const setsValidados = validarResultado();
-        if (!setsValidados || (setsValidados.length < 2 || setsValidados.length > 3)) {
-             setMensaje("🚨 El partido no puede finalizar. Debe ser 2-0 o 2-1.");
+        // Obtenemos los sets válidos. Si devuelve 'false', hay error de formato.
+        const setsValidados = validarResultado(scores); 
+
+        // Chequeo si el resultado NO cumple con 2 sets ganados para finalizar
+        if (!setsValidados || setsValidados.length < 2 || (setsValidados.length === 3 && setsValidados[2].every(s => s === 0))) {
+             setMensaje("🚨 El partido NO puede finalizar. Debe haber un resultado de 2-0 o 2-1 válido.");
              return;
         }
-        
+
         setMensaje("Finalizando partido y actualizando ranking...");
 
         try {
+            // Pasamos el array de sets que se jugaron.
             const result = await finalizarPartidoYActualizarRanking(partido, setsValidados);
             if (result.success) {
                 setMensaje(`🏆 Partido Finalizado! Ganador: ${result.ganador === partido.idEquipoA ? partido.nombreEquipoA : partido.nombreEquipoB}`);
-                // Llama al callback para que el padre recargue la lista
                 onUpdate(); 
             }
         } catch (error) {
@@ -100,28 +100,33 @@ const ScoreForm = ({ partido, onUpdate }) => {
         }
     }
     
-    // Función para marcar como "Jugando" o actualizar score sin finalizar
+    // CORRECCIÓN: Manejo de setsValidados en handleActualizar
     const handleActualizar = async () => {
-        const setsValidados = validarResultado(); 
+        setMensaje("Actualizando marcador...");
+
+        // Llamamos a validarResultado, pero si falla, no detenemos la actualización, 
+        // solo usamos el score tal cual está en el estado (scores), ya que es una actualización parcial.
+        const setsValidosCheck = validarResultado(scores); 
         
-        // Si no hay sets válidos ingresados y no hay scores previos, pedimos ingresar el score
-        if (!setsValidados && scores.every(([a, b]) => a === 0 && b === 0)) {
-            setMensaje("📝 Ingrese al menos el score del primer set.");
-            return;
+        // Filtramos el estado local (scores) para no enviar sets [0, 0] al campo resultadoSets
+        const scoresToUpdate = scores.filter(([a, b]) => a !== 0 || b !== 0);
+
+        if (scoresToUpdate.length === 0) {
+             setMensaje("📝 Ingrese al menos un game para marcar como 'Jugando'.");
+             return;
         }
 
-        setMensaje("Actualizando marcador...");
         try {
             const partidoRef = doc(db, "partidos", partido.id);
             await updateDoc(partidoRef, {
-                // Si setsValidos es un array (no false), el estado es 'Jugando' (o si ya estaba Jugando)
-                estado: setsValidos ? 'Jugando' : partido.estado, 
-                resultadoSets: setsValidos || [],
+                estado: 'Jugando', 
+                resultadoSets: scoresToUpdate,
             });
-            setMensaje(`⏱️ Marcador actualizado. Estado: ${setsValidos ? 'Jugando' : partido.estado}.`);
+            setMensaje(`⏱️ Marcador actualizado a: Jugando`);
             setTimeout(() => setMensaje(''), 3000);
-            onUpdate(); // Recarga la lista por si el estado cambió
+            onUpdate();
         } catch (error) {
+            // Este catch es el que atrapa el error de Firestore
             setMensaje(`❌ Error al actualizar: ${error.message}`);
         }
     }
